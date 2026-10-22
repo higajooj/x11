@@ -12,11 +12,8 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::{gdk, gio, glib};
 
-use crate::device::{Command, Event, Worker, Write};
-use crate::protocol::{
-    self, Binding, Model, Rgb, Settings, Status, REPORT_BUTTONS, REPORT_DPI, REPORT_LIGHT,
-    REPORT_MACRO, REPORT_POLLING,
-};
+use crate::device::{plan_writes, Command, Event, Worker};
+use crate::protocol::{self, Model, Rgb, Settings, Status};
 use crate::store;
 
 pub const APP_ID: &str = "io.github.AttackSharkGtk";
@@ -268,7 +265,7 @@ impl Ctx {
 
     fn apply(&self) {
         let mut st = self.state.borrow_mut();
-        if let Err(e) = validate(&st.settings, st.model) {
+        if let Err(e) = st.settings.validate(st.model) {
             drop(st);
             self.toast(&e);
             return;
@@ -283,53 +280,6 @@ impl Ctx {
         self.worker.send(Command::Write(writes));
         self.update_chrome();
     }
-}
-
-fn validate(s: &Settings, model: Option<Model>) -> Result<(), String> {
-    let stages = model.map_or(protocol::STAGES, |m| m.stages);
-    if !s.dpi_enabled[..stages].iter().any(|&e| e) {
-        return Err("Enable at least one DPI stage".into());
-    }
-    if !s.dpi_enabled[s.active_stage as usize] {
-        return Err("The active DPI stage must be enabled".into());
-    }
-    let left = Binding::from_app_code(0x01);
-    let buttons = model.map_or(&[][..], |m| m.buttons);
-    if !buttons.is_empty() && !buttons.iter().any(|&(slot, _)| s.buttons[slot] == left) {
-        return Err("At least one button must be Left click".into());
-    }
-    for &(slot, label) in buttons {
-        if s.buttons[slot].is_macro() && s.macros[slot].is_none() {
-            return Err(format!("{label} is set to a macro, but no macro is recorded"));
-        }
-    }
-    Ok(())
-}
-
-/// The feature reports needed to turn `old` (what the mouse has) into `new`.
-pub fn plan_writes(new: &Settings, old: Option<&Settings>) -> Vec<Write> {
-    let changed = |f: &dyn Fn(&Settings) -> Vec<u8>| old.is_none_or(|o| f(o) != f(new));
-    let mut writes = Vec::new();
-    for (slot, b) in new.buttons.iter().enumerate() {
-        let fresh = old.is_none_or(|o| o.buttons[slot] != *b || o.macros[slot] != new.macros[slot]);
-        if b.is_macro() && fresh {
-            if let Some(packets) = new.macro_packets(slot) {
-                writes.push(Write { what: "macro", report: REPORT_MACRO, packets });
-            }
-        }
-    }
-    let sections: [(&str, u8, fn(&Settings) -> Vec<u8>); 4] = [
-        ("DPI settings", REPORT_DPI, Settings::dpi_packet),
-        ("lighting and power settings", REPORT_LIGHT, Settings::light_packet),
-        ("polling rate", REPORT_POLLING, Settings::polling_packet),
-        ("button assignments", REPORT_BUTTONS, Settings::buttons_packet),
-    ];
-    for (what, report, packet) in sections {
-        if changed(&packet) {
-            writes.push(Write { what, report, packets: vec![packet(new)] });
-        }
-    }
-    writes
 }
 
 pub fn rgba(c: Rgb) -> gdk::RGBA {
@@ -511,37 +461,4 @@ fn profile_dialog(title: &str) -> gtk::FileDialog {
         dialog.set_initial_folder(Some(&gio::File::for_path(dir)));
     }
     dialog
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_changed_sections_are_written() {
-        let old = Settings::default();
-        assert!(plan_writes(&old, Some(&old)).is_empty());
-        let mut new = old.clone();
-        new.polling = protocol::PollingRate::Hz500;
-        let w = plan_writes(&new, Some(&old));
-        assert_eq!(w.len(), 1);
-        assert_eq!(w[0].packets[0][..5], [6, 9, 1, 2, 0xfd]);
-        assert_eq!(plan_writes(&new, None).len(), 4);
-    }
-
-    #[test]
-    fn macro_is_written_before_buttons() {
-        let old = Settings::default();
-        let mut new = old.clone();
-        new.buttons[6] = Binding::macro_slot(6);
-        new.macros[6] = Some(protocol::Macro {
-            name: "m".into(),
-            repeat: protocol::MacroRepeat::Times,
-            count: 1,
-            events: vec![],
-        });
-        let w = plan_writes(&new, Some(&old));
-        assert_eq!(w.iter().map(|w| w.report).collect::<Vec<_>>(), [REPORT_MACRO, REPORT_BUTTONS]);
-        assert_eq!(w[0].packets[0][2], 7);
-    }
 }

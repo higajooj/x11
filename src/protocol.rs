@@ -396,6 +396,28 @@ fn bits(flags: impl IntoIterator<Item = bool>) -> u8 {
 }
 
 impl Settings {
+    /// Check the rules the vendor app enforces before writing.
+    pub fn validate(&self, model: Option<Model>) -> Result<(), String> {
+        let stages = model.map_or(STAGES, |m| m.stages);
+        if !self.dpi_enabled[..stages].iter().any(|&e| e) {
+            return Err("Enable at least one DPI stage".into());
+        }
+        if !self.dpi_enabled[self.active_stage as usize] {
+            return Err("The active DPI stage must be enabled".into());
+        }
+        let left = Binding::from_app_code(0x01);
+        let buttons = model.map_or(&[][..], |m| m.buttons);
+        if !buttons.is_empty() && !buttons.iter().any(|&(slot, _)| self.buttons[slot] == left) {
+            return Err("At least one button must be Left click".into());
+        }
+        for &(slot, label) in buttons {
+            if self.buttons[slot].is_macro() && self.macros[slot].is_none() {
+                return Err(format!("{label} is set to a macro, but no macro is recorded"));
+            }
+        }
+        Ok(())
+    }
+
     pub fn dpi_packet(&self) -> Vec<u8> {
         let mut p = vec![0u8; 0x38];
         p[..3].copy_from_slice(&[REPORT_DPI, 0x38, 0x01]);

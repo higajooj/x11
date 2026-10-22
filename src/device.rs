@@ -10,8 +10,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::protocol::{
-    self, Settings, Status, PRODUCT_IDS, REPORT_BULK, REPORT_DPI, REPORT_LIGHT, REPORT_POLLING,
-    REPORT_QUERY, REPORT_VERSION, VENDOR_ID,
+    self, Settings, Status, PRODUCT_IDS, REPORT_BULK, REPORT_BUTTONS, REPORT_DPI, REPORT_LIGHT,
+    REPORT_MACRO, REPORT_POLLING, REPORT_QUERY, REPORT_VERSION, VENDOR_ID,
 };
 
 /// Without a status report for this long, the mouse is asleep or out of range.
@@ -111,6 +111,32 @@ pub struct Write {
     pub what: &'static str,
     pub report: u8,
     pub packets: Vec<Vec<u8>>,
+}
+
+/// The feature reports needed to turn `old` (what the mouse has) into `new`.
+pub fn plan_writes(new: &Settings, old: Option<&Settings>) -> Vec<Write> {
+    let changed = |f: &dyn Fn(&Settings) -> Vec<u8>| old.is_none_or(|o| f(o) != f(new));
+    let mut writes = Vec::new();
+    for (slot, b) in new.buttons.iter().enumerate() {
+        let fresh = old.is_none_or(|o| o.buttons[slot] != *b || o.macros[slot] != new.macros[slot]);
+        if b.is_macro() && fresh {
+            if let Some(packets) = new.macro_packets(slot) {
+                writes.push(Write { what: "macro", report: REPORT_MACRO, packets });
+            }
+        }
+    }
+    let sections: [(&str, u8, fn(&Settings) -> Vec<u8>); 4] = [
+        ("DPI settings", REPORT_DPI, Settings::dpi_packet),
+        ("lighting and power settings", REPORT_LIGHT, Settings::light_packet),
+        ("polling rate", REPORT_POLLING, Settings::polling_packet),
+        ("button assignments", REPORT_BUTTONS, Settings::buttons_packet),
+    ];
+    for (what, report, packet) in sections {
+        if changed(&packet) {
+            writes.push(Write { what, report, packets: vec![packet(new)] });
+        }
+    }
+    writes
 }
 
 #[derive(Debug)]
@@ -351,5 +377,39 @@ impl Session {
             }
         }
         Err(format!("{}: the mouse did not acknowledge the change", w.what))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::Binding;
+
+    #[test]
+    fn only_changed_sections_are_written() {
+        let old = Settings::default();
+        assert!(plan_writes(&old, Some(&old)).is_empty());
+        let mut new = old.clone();
+        new.polling = protocol::PollingRate::Hz500;
+        let w = plan_writes(&new, Some(&old));
+        assert_eq!(w.len(), 1);
+        assert_eq!(w[0].packets[0][..5], [6, 9, 1, 2, 0xfd]);
+        assert_eq!(plan_writes(&new, None).len(), 4);
+    }
+
+    #[test]
+    fn macro_is_written_before_buttons() {
+        let old = Settings::default();
+        let mut new = old.clone();
+        new.buttons[6] = Binding::macro_slot(6);
+        new.macros[6] = Some(protocol::Macro {
+            name: "m".into(),
+            repeat: protocol::MacroRepeat::Times,
+            count: 1,
+            events: vec![],
+        });
+        let w = plan_writes(&new, Some(&old));
+        assert_eq!(w.iter().map(|w| w.report).collect::<Vec<_>>(), [REPORT_MACRO, REPORT_BUTTONS]);
+        assert_eq!(w[0].packets[0][2], 7);
     }
 }
