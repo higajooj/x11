@@ -1,16 +1,23 @@
 mod device;
+mod keys;
 mod protocol;
+mod store;
 mod tables;
+mod ui;
 
 use std::time::{Duration, Instant};
 
+use adw::prelude::*;
+
 use device::{Command, Event, Worker};
 
-fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().map(String::as_str) == Some("--read") {
+fn main() -> gtk::glib::ExitCode {
+    if std::env::args().nth(1).as_deref() == Some("--read") {
         std::process::exit(read_to_stdout());
     }
+    let app = adw::Application::builder().application_id(ui::APP_ID).build();
+    app.connect_activate(ui::build);
+    app.run()
 }
 
 /// Print the mouse's current settings as JSON.

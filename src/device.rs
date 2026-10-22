@@ -29,7 +29,6 @@ fn hid_ioctl(nr: u64, len: usize) -> u64 {
 
 pub struct Hidraw {
     file: File,
-    pub path: PathBuf,
 }
 
 impl Hidraw {
@@ -60,7 +59,7 @@ impl Hidraw {
             .write(true)
             .custom_flags(libc::O_NONBLOCK)
             .open(path)?;
-        Ok(Hidraw { file, path: path.to_owned() })
+        Ok(Hidraw { file })
     }
 
     pub fn set_feature(&self, data: &[u8]) -> io::Result<()> {
