@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Attack Shark
+Comment=Configure Attack Shark X11 mice
+Exec=attack-shark
+Icon=input-mouse
+Terminal=false
+Categories=Settings;HardwareSettings;GTK;
+Keywords=mouse;dpi;rgb;macro;
