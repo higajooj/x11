@@ -1,0 +1,3 @@
+# Attack Shark mice (2.4 GHz receiver / wired): let the logged-in user open hidraw nodes
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1d57", ATTRS{idProduct}=="fa60", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1d57", ATTRS{idProduct}=="fa65", TAG+="uaccess"
