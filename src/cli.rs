@@ -53,6 +53,7 @@ impl Connection {
                     ))
                 }
                 Ok(Event::ReadFailed(e)) => return Err(format!("read failed: {e}")),
+                Ok(Event::Asleep) => return Err("the mouse is asleep; move it and try again".into()),
                 Ok(event) => {
                     if let Some(v) = f(event) {
                         return Ok(v);

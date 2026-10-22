@@ -31,6 +31,7 @@ pub struct State {
     pub battery: Option<(u8, bool, bool)>,
     pub version: Option<u16>,
     busy: Option<String>,
+    asleep: bool,
 }
 
 impl State {
@@ -136,7 +137,9 @@ impl Ctx {
         } else if st.receiver.is_none() {
             Some("No Attack Shark receiver found. Plug it in or connect the cable.".into())
         } else if st.model.is_none() {
-            Some("Receiver found, but the mouse isn't responding. Move it to wake it up.".into())
+            Some("Looking for the mouse… Make sure it's switched on.".into())
+        } else if st.asleep {
+            Some("The mouse is asleep. Move it to wake it up.".into())
         } else if let Some(m) = st.model.filter(|m| !m.verified) {
             Some(format!(
                 "Model {:#04x} (vendor page MS_{}) hasn't been verified, so changes are disabled.",
@@ -199,6 +202,12 @@ impl Ctx {
                     }
                 }
             }
+            Event::Asleep => {
+                self.state.borrow_mut().asleep = true;
+                // Keep asking until it wakes; a sleeping mouse can't tell us when.
+                let worker = self.worker.clone();
+                glib::timeout_add_seconds_local_once(3, move || worker.send(Command::Read));
+            }
             Event::ReadFailed(e) => self.toast(&format!("Couldn't read settings: {e}")),
         }
         self.update_chrome();
@@ -248,6 +257,7 @@ impl Ctx {
         {
             let mut st = self.state.borrow_mut();
             st.version = Some(version);
+            st.asleep = false;
             st.synced = Some(settings.clone());
             st.settings = settings;
         }
@@ -302,7 +312,7 @@ pub fn build(app: &adw::Application) {
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title("Attack Shark")
-        .default_width(720)
+        .default_width(860)
         .default_height(760)
         .build();
 
@@ -329,7 +339,7 @@ pub fn build(app: &adw::Application) {
     }
 
     let stack = adw::ViewStack::new();
-    stack.add_titled_with_icon(&performance::page(&ctx), Some("dpi"), "Performance", "power-profile-performance-symbolic");
+    stack.add_titled_with_icon(&performance::page(&ctx), Some("dpi"), "DPI", "power-profile-performance-symbolic");
     stack.add_titled_with_icon(&buttons::page(&ctx), Some("buttons"), "Buttons", "input-mouse-symbolic");
     stack.add_titled_with_icon(&lighting::page(&ctx), Some("lighting"), "Lighting", "display-brightness-symbolic");
     stack.add_titled_with_icon(&power::page(&ctx), Some("power"), "Power", "battery-symbolic");

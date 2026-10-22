@@ -18,6 +18,8 @@ use crate::protocol::{
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(6);
 const WRITE_ATTEMPTS: usize = 10;
 const ACK_TIMEOUT: Duration = Duration::from_millis(500);
+/// A sleeping mouse keeps the receiver's heartbeat going but ignores queries.
+const ASLEEP: &str = "the mouse is asleep; move it to wake it up";
 
 /// Top-level collection on usage page 0x0B that carries the feature reports.
 const CONFIG_COLLECTION: [u8; 4] = [0x05, 0x0b, 0x09, 0x00];
@@ -156,9 +158,12 @@ pub enum Event {
     Settings { settings: Box<Settings>, version: u16 },
     Busy(Option<String>),
     WriteDone(std::result::Result<(), String>),
+    /// The mouse didn't answer a read; it wakes when moved.
+    Asleep,
     ReadFailed(String),
 }
 
+#[derive(Clone)]
 pub struct Worker {
     commands: mpsc::Sender<Command>,
 }
@@ -292,6 +297,7 @@ impl Session {
                     Ok((settings, version)) => {
                         self.emit(Event::Settings { settings: Box::new(settings), version })
                     }
+                    Err(e) if e == ASLEEP => self.emit(Event::Asleep),
                     Err(e) => self.emit(Event::ReadFailed(e)),
                 }
             }
@@ -321,7 +327,7 @@ impl Session {
             }
         }
         if !ready {
-            return Err(format!("report {report:#04x}: mouse did not answer (asleep?)"));
+            return Err(ASLEEP.into());
         }
         let data = self.dev()?.get_feature(report, len as usize).map_err(io)?;
         if data.first() != Some(&report) {
@@ -376,7 +382,7 @@ impl Session {
                 }
             }
         }
-        Err(format!("{}: the mouse did not acknowledge the change", w.what))
+        Err(format!("Writing {} failed: the mouse didn't confirm it. Is it asleep?", w.what))
     }
 }
 
